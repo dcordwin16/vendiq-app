@@ -10,9 +10,10 @@ export const authOptions: NextAuthOptions = {
   ],
   callbacks: {
     async signIn({ user }) {
-      // Allow any Google account for now — restrict later when multi-tenant
       const allowed = process.env.ALLOWED_EMAIL
-      if (allowed && user.email !== allowed) {
+      if (!allowed) return true  // no restriction set
+      const allowedList = allowed.split(",").map(e => e.trim().toLowerCase())
+      if (!allowedList.includes((user.email || "").toLowerCase())) {
         return false
       }
       return true
