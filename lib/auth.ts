@@ -10,19 +10,24 @@ export const authOptions: NextAuthOptions = {
   ],
   callbacks: {
     async signIn({ user }) {
-      // Only allow the owner for now
-      return user.email === process.env.ALLOWED_EMAIL
+      // Allow any Google account for now — restrict later when multi-tenant
+      const allowed = process.env.ALLOWED_EMAIL
+      if (allowed && user.email !== allowed) {
+        return false
+      }
+      return true
     },
     async session({ session }) {
       return session
     },
-    async jwt({ token }) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async jwt({ token }: any) {
       return token
     },
   },
   pages: {
     signIn: "/login",
-    error: "/login",
+    error: "/auth/error",
   },
   secret: process.env.NEXTAUTH_SECRET,
 }
