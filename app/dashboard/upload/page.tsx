@@ -221,11 +221,11 @@ export default function UploadPage() {
         {/* Instructions */}
         <div className="bg-gray-800 rounded-2xl border border-gray-700 p-6">
           <p className="text-gray-300 text-sm font-medium mb-3">How to export from Nayax:</p>
-          <ol className="text-gray-400 text-sm space-y-1.5 list-decimal list-inside">
-            <li>Log in to <span className="text-blue-400">my.nayax.com</span></li>
-            <li>Go to Reports → Sales Summary</li>
-            <li>Set your date range (up to 90 days recommended)</li>
-            <li>Click Export → CSV</li>
+          <ol className=\"text-gray-400 text-sm space-y-1.5 list-decimal list-inside\">
+            <li>Log in to <a href=\"https://my.nayax.com\" target=\"_blank\" className=\"text-blue-400 hover:underline\">my.nayax.com</a></li>
+            <li>Go to Reports → Online Reports → Sales Summary</li>
+            <li>Select your Actor (operator name) and set your date range</li>
+            <li>Click <strong className=\"text-gray-300\">View Report</strong>, then <strong className=\"text-gray-300\">Export → Export to CSV</strong></li>
             <li>Upload the downloaded file here</li>
           </ol>
           <p className="text-gray-500 text-xs mt-3">
