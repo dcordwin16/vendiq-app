@@ -1,6 +1,6 @@
 'use client'
 
-import { createClient } from '@/lib/supabase/client'
+import { signIn } from 'next-auth/react'
 import { useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
 
@@ -9,14 +9,7 @@ function LoginContent() {
   const error = searchParams.get('error')
 
   const handleGoogleLogin = async () => {
-    const supabase = createClient()
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${appUrl}/auth/callback`,
-      },
-    })
+    await signIn('google', { callbackUrl: '/dashboard' })
   }
 
   return (

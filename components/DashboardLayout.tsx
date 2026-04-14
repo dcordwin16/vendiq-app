@@ -2,9 +2,8 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { User } from '@supabase/supabase-js'
+import { usePathname } from 'next/navigation'
+import { signOut } from 'next-auth/react'
 import {
   LayoutDashboard,
   Package,
@@ -25,25 +24,28 @@ const navLinks = [
   { href: '/dashboard/settings', label: 'Settings', icon: Settings },
 ]
 
+interface SessionUser {
+  name?: string | null
+  email?: string | null
+  image?: string | null
+}
+
 interface DashboardLayoutProps {
   children: React.ReactNode
-  user: User
+  user: SessionUser
 }
 
 export default function DashboardLayout({ children, user }: DashboardLayoutProps) {
   const pathname = usePathname()
-  const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const handleSignOut = async () => {
-    const supabase = createClient()
-    await supabase.auth.signOut()
-    router.push('/login')
+    await signOut({ callbackUrl: '/login' })
   }
 
-  const avatarUrl = user?.user_metadata?.avatar_url
+  const avatarUrl = user?.image
   const email = user?.email || ''
-  const initials = (user?.user_metadata?.full_name || email)
+  const initials = (user?.name || email)
     .split(' ')
     .map((n: string) => n[0])
     .join('')
@@ -104,7 +106,7 @@ export default function DashboardLayout({ children, user }: DashboardLayoutProps
           )}
           <div className="flex-1 min-w-0">
             <p className="text-white text-sm font-medium truncate">
-              {user?.user_metadata?.full_name || 'User'}
+              {user?.name || 'User'}
             </p>
             <p className="text-gray-400 text-xs truncate">{email}</p>
           </div>
