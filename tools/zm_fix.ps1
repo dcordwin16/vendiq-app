@@ -98,7 +98,22 @@ if __name__ == "__main__":
         pg.PAUSE    = 0.3
 
         subprocess.Popen([exe])
-        time.sleep(12)
+        time.sleep(10)
+
+        # Handle "Select Site" dialog (always appears on startup)
+        # AB123 should already be selected — just click OK
+        for title in gw.getAllTitles():
+            if "select" in title.lower() and "site" in title.lower():
+                w = gw.getWindowsWithTitle(title)[0]
+                w.activate()
+                time.sleep(0.5)
+                pg.press("enter")  # OK button (default/focused)
+                time.sleep(3)
+                break
+        else:
+            # Try pressing Enter blindly in case dialog is untitled
+            pg.press("enter")
+            time.sleep(3)
 
         # Handle login dialog
         for title in gw.getAllTitles():
