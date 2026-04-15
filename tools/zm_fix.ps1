@@ -120,16 +120,19 @@ if __name__ == "__main__":
                     w = gw.getWindowsWithTitle(title)[0]
                     w.activate()
                     time.sleep(0.8)
-                    # Login dialog has 3 fields: Site IP (auto-filled), Username, Password
-                    # Tab past Site IP, then fill Username and Password
-                    pg.press("tab")          # skip Site IP — leave it alone
+                    # Login dialog: Site IP (auto-filled), Username, Password
+                    # Use clipboard paste — typewrite() is CapsLock-dependent
+                    import pyperclip
+                    pg.press("tab")          # skip Site IP
                     time.sleep(0.3)
+                    pyperclip.copy("MANAGER")
                     pg.hotkey("ctrl","a")
-                    pg.typewrite("MANAGER", interval=0.05)
+                    pg.hotkey("ctrl","v")
                     pg.press("tab")
                     time.sleep(0.3)
+                    pyperclip.copy("ZOOMART9")
                     pg.hotkey("ctrl","a")
-                    pg.typewrite("ZOOMART9", interval=0.05)
+                    pg.hotkey("ctrl","v")
                     pg.press("enter")
                     time.sleep(6)
                     login_done = True
@@ -158,16 +161,20 @@ if __name__ == "__main__":
             time.sleep(0.2)
         pg.hotkey("alt","down")
         time.sleep(0.5)
-        pg.typewrite("Period 2", interval=0.04)
+        import pyperclip
+        pyperclip.copy("Period 2")
+        pg.hotkey("ctrl","v")
         time.sleep(0.3)
         pg.press("enter")
         time.sleep(0.5)
 
-        # Period date
+        # Period date — paste exact date string, no CapsLock risk
         pg.press("tab")
         time.sleep(0.3)
+        import pyperclip
+        pyperclip.copy(yest_str)
         pg.hotkey("ctrl","a")
-        pg.typewrite(yest_str, interval=0.04)
+        pg.hotkey("ctrl","v")
         time.sleep(0.3)
         pg.press("tab")
         time.sleep(0.3)
@@ -175,9 +182,10 @@ if __name__ == "__main__":
         # Click Summary in report list, Add
         pg.click(W//4, H//2)
         time.sleep(0.3)
+        # Type S to jump to Summary in report list
         pg.hotkey("ctrl","home")
         time.sleep(0.2)
-        pg.typewrite("s", interval=0.1)
+        pg.press("s")
         time.sleep(0.3)
         pg.hotkey("alt","a")
         time.sleep(0.4)
@@ -185,7 +193,7 @@ if __name__ == "__main__":
         # Click Department, Add
         pg.click(W//4, H//2 + 30)
         time.sleep(0.3)
-        pg.typewrite("d", interval=0.1)
+        pg.press("d")
         time.sleep(0.3)
         pg.hotkey("alt","a")
         time.sleep(0.4)
@@ -260,7 +268,11 @@ Register-ScheduledTask -TaskName "ZooMartReportNavigator" `
 
 Write-Host "Scheduled task registered: 4:29 AM daily as SYSTEM" -ForegroundColor Green
 
-# -- 5. Quick syntax check --
+# -- 5. Ensure pyperclip is installed (needed for clipboard-based input) --
+Write-Host "Checking pyperclip..." -ForegroundColor Cyan
+& "C:\Program Files\Python311\Scripts\pip.exe" install pyperclip --quiet 2>&1
+
+# -- 6. Quick syntax check --
 Write-Host "Checking Python syntax..." -ForegroundColor Cyan
 & "C:\Program Files\Python311\python.exe" -m py_compile $pyPath
 if ($LASTEXITCODE -eq 0) {
