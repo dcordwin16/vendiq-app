@@ -100,35 +100,40 @@ if __name__ == "__main__":
         subprocess.Popen([exe])
         time.sleep(10)
 
-        # Handle "Select Site" dialog (always appears on startup)
-        # AB123 should already be selected — just click OK
+        # Step 1: Handle "Select Site" dialog IF it appears (sometimes shows, sometimes not)
         for title in gw.getAllTitles():
             if "select" in title.lower() and "site" in title.lower():
                 w = gw.getWindowsWithTitle(title)[0]
                 w.activate()
                 time.sleep(0.5)
-                pg.press("enter")  # OK button (default/focused)
+                pg.press("enter")  # AB123 already selected, just OK
                 time.sleep(3)
                 break
-        else:
-            # Try pressing Enter blindly in case dialog is untitled
-            pg.press("enter")
-            time.sleep(3)
 
-        # Handle login dialog
-        for title in gw.getAllTitles():
-            if any(x in title.lower() for x in ["login","sign in","logon","commander"]):
-                w = gw.getWindowsWithTitle(title)[0]
-                w.activate()
-                time.sleep(1)
-                pg.hotkey("ctrl","a")
-                pg.typewrite("MANAGER", interval=0.05)
-                pg.press("tab")
-                pg.hotkey("ctrl","a")
-                pg.typewrite("ZOOMART9", interval=0.05)
-                pg.press("enter")
-                time.sleep(6)
+        # Step 2: Login dialog — primary flow, always appears
+        # Wait up to 10s for it to appear
+        login_done = False
+        for attempt in range(10):
+            for title in gw.getAllTitles():
+                tl = title.lower()
+                if any(x in tl for x in ["login","sign in","logon","commander","report navigator"]):
+                    w = gw.getWindowsWithTitle(title)[0]
+                    w.activate()
+                    time.sleep(0.8)
+                    # Click username field (first field) and type
+                    pg.hotkey("ctrl","a")
+                    pg.typewrite("MANAGER", interval=0.05)
+                    pg.press("tab")
+                    time.sleep(0.3)
+                    pg.hotkey("ctrl","a")
+                    pg.typewrite("ZOOMART9", interval=0.05)
+                    pg.press("enter")
+                    time.sleep(6)
+                    login_done = True
+                    break
+            if login_done:
                 break
+            time.sleep(1)
 
         # Bring Report Navigator to front
         for title in gw.getAllTitles():
