@@ -120,7 +120,10 @@ if __name__ == "__main__":
                     w = gw.getWindowsWithTitle(title)[0]
                     w.activate()
                     time.sleep(0.8)
-                    # Click username field (first field) and type
+                    # Login dialog has 3 fields: Site IP (auto-filled), Username, Password
+                    # Tab past Site IP, then fill Username and Password
+                    pg.press("tab")          # skip Site IP — leave it alone
+                    time.sleep(0.3)
                     pg.hotkey("ctrl","a")
                     pg.typewrite("MANAGER", interval=0.05)
                     pg.press("tab")
