@@ -140,63 +140,64 @@ if __name__ == "__main__":
             tg("Zoo Mart: could not find main window after login")
             sys.exit(1)
 
-        # -- Now on View Reports screen --
-        # Layout: LEFT side = Period Type dropdown, Period dropdown, Reports list
-        #         RIGHT side = selected reports (after Add)
-        #         Process button = bottom right
-        time.sleep(1)
-        if wins:
-            win = wins[0]
-            win.activate()
-            time.sleep(0.5)
+        # -- Navigate to Reports > View Reports using keyboard only --
+        time.sleep(2)
+        for title in gw.getAllTitles():
+            if any(x in title.lower() for x in ["report navigator","verifone"]):
+                gw.getWindowsWithTitle(title)[0].activate()
+                time.sleep(1)
+                break
 
-            # Coordinates relative to window
-            left_x  = win.left + int(win.width * 0.18)   # left panel dropdowns/list
-            top_y   = win.top  + int(win.height * 0.15)  # Period Type row
-            per_y   = win.top  + int(win.height * 0.25)  # Period row
-            list_y  = win.top  + int(win.height * 0.45)  # Reports list
+        # Alt activates menu bar, R opens Reports menu, Enter selects View Reports (first item)
+        pg.hotkey("alt", "r")
+        time.sleep(0.8)
+        pg.press("enter")
+        time.sleep(2)
 
-            # -- Period Type dropdown --
-            pg.click(left_x, top_y)
-            time.sleep(0.5)
-            pg.hotkey("ctrl","a")
-            pyperclip.copy("Period 2 Example Day")
-            pg.hotkey("ctrl","v")
-            time.sleep(0.3)
-            pg.press("enter")
-            time.sleep(0.5)
+        # -- View Reports form: Tab through fields --
+        # Field order: Period Type, Period, Reports list, Add button, Process button
+        # Press Tab to reach Period Type dropdown, then select with keyboard
+        pg.press("tab")
+        time.sleep(0.4)
+        # Open Period Type dropdown and type to filter
+        pyperclip.copy("Period 2 Example Day")
+        pg.hotkey("ctrl","a")
+        pg.hotkey("ctrl","v")
+        time.sleep(0.3)
+        pg.press("enter")
+        time.sleep(0.5)
 
-            # -- Period dropdown (yesterday's date) --
-            pg.click(left_x, per_y)
-            time.sleep(0.5)
-            pg.hotkey("ctrl","a")
-            pyperclip.copy(yest_str)
-            pg.hotkey("ctrl","v")
-            time.sleep(0.3)
-            pg.press("enter")
-            time.sleep(0.5)
+        # Tab to Period dropdown
+        pg.press("tab")
+        time.sleep(0.4)
+        pyperclip.copy(yest_str)
+        pg.hotkey("ctrl","a")
+        pg.hotkey("ctrl","v")
+        time.sleep(0.3)
+        pg.press("enter")
+        time.sleep(0.5)
 
-            # -- Select Summary from reports list, click Add --
-            pg.click(left_x, list_y)
-            time.sleep(0.3)
-            pg.hotkey("ctrl","home")
-            time.sleep(0.2)
-            pg.press("s")           # jump to Summary
-            time.sleep(0.3)
-            pg.hotkey("alt","a")    # Add
-            time.sleep(0.5)
+        # Tab to Reports list
+        pg.press("tab")
+        time.sleep(0.4)
+        # Jump to Summary
+        pg.hotkey("ctrl","home")
+        time.sleep(0.2)
+        pg.press("s")
+        time.sleep(0.3)
+        # Alt+A = Add
+        pg.hotkey("alt","a")
+        time.sleep(0.5)
 
-            # -- Select Department from reports list, click Add --
-            pg.click(left_x, list_y)
-            time.sleep(0.3)
-            pg.press("d")           # jump to Department
-            time.sleep(0.3)
-            pg.hotkey("alt","a")    # Add
-            time.sleep(0.5)
+        # Jump to Department in list
+        pg.press("d")
+        time.sleep(0.3)
+        pg.hotkey("alt","a")
+        time.sleep(0.5)
 
-            # -- Click Process (bottom-right area of window) --
-            pg.click(win.left + int(win.width * 0.75), win.top + win.height - 60)
-            time.sleep(35)          # wait for HTML files to generate
+        # Alt+P = Process
+        pg.hotkey("alt","p")
+        time.sleep(35)
 
     except Exception as e:
         tg("Zoo Mart automation error: " + str(e))
