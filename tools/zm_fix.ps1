@@ -141,7 +141,10 @@ if __name__ == "__main__":
                 break
             time.sleep(1)
 
-        # Bring Report Navigator to front
+        # Wait for main window to fully load after login
+        time.sleep(4)
+
+        # Bring Report Navigator main window to front
         for title in gw.getAllTitles():
             if any(x in title.lower() for x in ["report navigator","verifone","navigator"]):
                 w = gw.getWindowsWithTitle(title)[0]
@@ -151,7 +154,36 @@ if __name__ == "__main__":
 
         W, H = pg.size()
 
-        # Click Period Type dropdown area
+        # Screenshot the main screen and send to Telegram so we can see the UI
+        import tempfile
+        shot_path = tempfile.mktemp(suffix=".png")
+        pg.screenshot(shot_path)
+
+        # Send screenshot via Telegram
+        import urllib.request, urllib.parse
+        with open(shot_path, "rb") as f:
+            img_data = f.read()
+        import base64, json
+        # Use sendPhoto with multipart
+        boundary = "----boundary"
+        body = (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{CHAT_ID}\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"screen.png\"\r\nContent-Type: image/png\r\n\r\n"
+        ).encode() + img_data + f"\r\n--{boundary}--\r\n".encode()
+        req = urllib.request.Request(
+            "https://api.telegram.org/bot" + BOT_TOKEN + "/sendPhoto",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}
+        )
+        try:
+            urllib.request.urlopen(req, timeout=20)
+            print("Screenshot sent to Telegram")
+        except Exception as e:
+            print("Screenshot send error: " + str(e))
+
+        # Also list all window titles so we know what's open
+        tg("After login - windows open: " + str([t for t in gw.getAllTitles() if t.strip()]))
+        sys.exit(0)  # Stop here — waiting for UI confirmation before proceeding
         pg.click(W//2 - 100, H//2 - 150)
         time.sleep(1)
         pg.hotkey("ctrl","home")
