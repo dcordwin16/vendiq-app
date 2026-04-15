@@ -1,0 +1,373 @@
+
+import os, re
+
+# Read token directly from file
+with open(os.path.expanduser('~/.hermes/.env'), 'rb') as f:
+    raw = f.read().decode('utf-8')
+
+m = re.search(r'TELEGRAM_BOT_TOKEN=([A-Za-z0-9:_\-]+)', raw)
+bot_token = m.group(1).strip() if m else ''
+
+chat_id = "8452546363"
+
+# The main Python script that will run on the Zoo Mart PC
+py_script = r'''
+import subprocess, sys, os, time, datetime, json, re, glob
+
+def send_telegram(token, chat_id, message):
+    import urllib.request, urllib.parse
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    data = urllib.parse.urlencode({"chat_id": chat_id, "text": message, "parse_mode": "HTML"}).encode()
+    req = urllib.request.Request(url, data=data)
+    try:
+        urllib.request.urlopen(req, timeout=15)
+    except Exception as e:
+        print(f"Telegram error: {e}")
+
+BOT_TOKEN = "PLACEHOLDER_TOKEN"
+CHAT_ID   = "PLACEHOLDER_CHAT"
+CACHE_DIR = r"C:\Users\binod\OneDrive\Documents\Verifone\Site Management Tools\Report Navigator\cache\AB123"
+
+def find_report_navigator():
+    candidates = [
+        r"C:\Program Files\Verifone\Site Management Tools\Report Navigator\ReportNavigator.exe",
+        r"C:\Program Files (x86)\Verifone\Site Management Tools\Report Navigator\ReportNavigator.exe",
+        r"C:\Verifone\Site Management Tools\Report Navigator\ReportNavigator.exe",
+        r"C:\Users\binod\Desktop\Report Navigator.lnk",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    # Search drive
+    for root, dirs, files in os.walk(r"C:\\"):
+        for f in files:
+            if "reportnavigator" in f.lower() and f.endswith(".exe"):
+                return os.path.join(root, f)
+        dirs[:] = [d for d in dirs if d not in ['Windows','$Recycle.Bin','System Volume Information']]
+    return None
+
+def get_yesterday_str():
+    y = datetime.date.today() - datetime.timedelta(days=1)
+    return y.strftime("%Y-%m-%d"), y.strftime("%m/%d/%Y"), y
+
+def parse_summary_html(html_path):
+    with open(html_path, 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+    results = {}
+    # Net Sales Total
+    m = re.search(r'Net Sales[^<]*</[^>]+>\s*<[^>]+>\s*\$?([\d,]+\.?\d*)', content, re.IGNORECASE)
+    if m:
+        results['net_sales'] = m.group(1)
+    # Credit/Debit/Cash
+    for label in ['Credit', 'Debit', 'Cash']:
+        m = re.search(rf'{label}[^<]*</[^>]+>\s*<[^>]+>\s*\$?([\d,]+\.?\d*)', content, re.IGNORECASE)
+        if m:
+            results[label.lower()] = m.group(1)
+    # Transaction count
+    m = re.search(r'Transaction[s]?[^<]*</[^>]+>\s*<[^>]+>\s*([\d,]+)', content, re.IGNORECASE)
+    if m:
+        results['transactions'] = m.group(1)
+    return results
+
+def parse_department_html(html_path):
+    with open(html_path, 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+    depts = []
+    # Find table rows with dept name + sales amount
+    rows = re.findall(r'<tr[^>]*>(.*?)</tr>', content, re.IGNORECASE | re.DOTALL)
+    for row in rows:
+        cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.IGNORECASE | re.DOTALL)
+        cells = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
+        cells = [c for c in cells if c]
+        if len(cells) >= 2:
+            name = cells[0]
+            amt = next((c for c in cells[1:] if re.match(r'[\$]?[\d,]+\.?\d*$', c.strip())), None)
+            if amt and name and len(name) < 40 and not name.startswith('Dept'):
+                depts.append((name, amt))
+    return depts[:10]
+
+def run_report_navigator_pyautogui(exe_path, yesterday_str):
+    try:
+        import pyautogui
+        import subprocess, time
+        pyautogui.FAILSAFE = False
+        
+        # Launch app
+        subprocess.Popen([exe_path])
+        time.sleep(8)
+        
+        # Take screenshot to see what's on screen
+        screen = pyautogui.screenshot()
+        w, h = screen.size
+        
+        # Look for Commander login prompt - check pixel colors to detect dialog
+        # Try to find and click Period Type dropdown area (roughly center-left of screen)
+        # First check if login dialog appeared
+        time.sleep(2)
+        
+        # Type credentials in case login dialog is up
+        pyautogui.hotkey('alt', 'tab')
+        time.sleep(1)
+        
+        # Use image recognition approach - look for specific UI elements by color patterns
+        # Report Navigator has a specific layout - try clicking known positions
+        # Period Type dropdown is typically in upper portion
+        pyautogui.click(w//2, h//2)
+        time.sleep(1)
+        
+        # Try Tab navigation to reach fields
+        pyautogui.hotkey('ctrl', 'a')
+        time.sleep(0.5)
+        
+        return True
+    except ImportError:
+        return False
+
+def automate_via_pyautogui(exe_path, yesterday_display):
+    """Full automation of Report Navigator using pyautogui"""
+    import pyautogui, time, subprocess
+    import pygetwindow as gw
+    pyautogui.FAILSAFE = False
+    
+    # Kill any existing instance
+    subprocess.run(['taskkill', '/f', '/im', 'ReportNavigator.exe'], 
+                   capture_output=True)
+    time.sleep(1)
+    
+    # Launch
+    subprocess.Popen([exe_path])
+    time.sleep(10)  # Wait for app to load
+    
+    # Find window
+    windows = [w for w in gw.getAllTitles() if 'report' in w.lower() or 'navigator' in w.lower() or 'verifone' in w.lower()]
+    if windows:
+        win = gw.getWindowsWithTitle(windows[0])[0]
+        win.activate()
+        time.sleep(1)
+    
+    # Handle potential login dialog
+    # Try typing MANAGER then tab then ZOOMART9 then Enter
+    time.sleep(2)
+    # Check for login window
+    login_wins = [w for w in gw.getAllTitles() if 'log' in w.lower() or 'sign' in w.lower()]
+    if login_wins:
+        pyautogui.typewrite('MANAGER', interval=0.05)
+        pyautogui.press('tab')
+        pyautogui.typewrite('ZOOMART9', interval=0.05)
+        pyautogui.press('enter')
+        time.sleep(5)
+    
+    # Now in main app - use Tab/keyboard navigation
+    # Period Type: use keyboard shortcut or find by position
+    # Try Alt+P for Period menu or look for dropdown
+    pyautogui.hotkey('alt', 'p')
+    time.sleep(0.5)
+    
+    # Select "Period 2 Example Day" - look for it in dropdown
+    # Type to search or use arrow keys
+    pyautogui.typewrite('Period 2', interval=0.03)
+    time.sleep(0.5)
+    pyautogui.press('enter')
+    time.sleep(0.5)
+    
+    # Period dropdown - select yesterday
+    pyautogui.press('tab')
+    time.sleep(0.3)
+    pyautogui.hotkey('ctrl', 'a')
+    pyautogui.typewrite(yesterday_display, interval=0.03)
+    time.sleep(0.3)
+    
+    # Find Summary in report list and click Add
+    # Try clicking "Summary" text
+    loc = pyautogui.locateOnScreen('summary_btn.png', confidence=0.7)
+    if not loc:
+        # Use keyboard - Tab to report list
+        for _ in range(5):
+            pyautogui.press('tab')
+            time.sleep(0.1)
+    pyautogui.press('enter')  # Select Summary
+    time.sleep(0.3)
+    
+    # Click Add button
+    pyautogui.hotkey('alt', 'a')
+    time.sleep(0.3)
+    
+    # Find Department and Add
+    pyautogui.press('down')
+    time.sleep(0.2)
+    # Look for Department
+    for _ in range(10):
+        title = gw.getActiveWindowTitle() or ''
+        import pyperclip
+        pyautogui.hotkey('ctrl', 'c')
+        if 'dept' in str(pyperclip.paste()).lower():
+            break
+        pyautogui.press('down')
+        time.sleep(0.1)
+    pyautogui.hotkey('alt', 'a')
+    time.sleep(0.3)
+    
+    # Click Process
+    pyautogui.hotkey('alt', 'r')  # Try Alt+R for Process/Run
+    time.sleep(30)  # Wait for reports to generate
+    
+    return True
+
+# ---- MAIN ----
+if __name__ == '__main__':
+    yesterday_iso, yesterday_display, yesterday_date = get_yesterday_str()
+    
+    # Find the exe
+    exe = find_report_navigator()
+    if not exe:
+        send_telegram(BOT_TOKEN, CHAT_ID, 
+            "Zoo Mart: Could not find Report Navigator executable. Manual intervention needed.")
+        sys.exit(1)
+    
+    # Log exe path found
+    print(f"Found Report Navigator: {exe}")
+    
+    # Try pyautogui automation
+    try:
+        import pyautogui
+        automate_via_pyautogui(exe, yesterday_display)
+    except Exception as e:
+        send_telegram(BOT_TOKEN, CHAT_ID, f"Zoo Mart: Automation error: {e}")
+    
+    # Wait for files then read them
+    time.sleep(35)
+    
+    # Find HTML files for yesterday
+    period_path = os.path.join(CACHE_DIR, "period", "2")
+    
+    # Look for yesterday's date folder
+    summary_html = None
+    dept_html = None
+    
+    # Search for files modified in last 10 minutes
+    cutoff = time.time() - 600
+    for root, dirs, files in os.walk(CACHE_DIR):
+        for fname in files:
+            fpath = os.path.join(root, fname)
+            if os.stat(fpath).st_mtime > cutoff and fname.endswith('.html'):
+                fname_lower = fname.lower()
+                if 'summary' in fname_lower:
+                    summary_html = fpath
+                elif 'dept' in fname_lower or 'department' in fname_lower:
+                    dept_html = fpath
+    
+    # Also try date-based path
+    if not summary_html:
+        date_dirs = glob.glob(os.path.join(period_path, yesterday_iso + '*'))
+        if not date_dirs:
+            date_dirs = glob.glob(os.path.join(period_path, '*' + yesterday_iso + '*'))
+        for d in date_dirs:
+            for fname in os.listdir(d):
+                if fname.endswith('.html'):
+                    if 'summary' in fname.lower():
+                        summary_html = os.path.join(d, fname)
+                    elif 'dept' in fname.lower():
+                        dept_html = os.path.join(d, fname)
+    
+    if not summary_html:
+        # List what's in the cache
+        found = []
+        for root, dirs, files in os.walk(CACHE_DIR):
+            for f in files:
+                if f.endswith('.html'):
+                    found.append(os.path.join(root, f))
+        send_telegram(BOT_TOKEN, CHAT_ID, 
+            f"Zoo Mart: No summary HTML found for {yesterday_iso}\nCache files found:\n" + 
+            "\n".join(found[-5:]) if found else "No HTML files found at all.")
+        sys.exit(1)
+    
+    # Parse the files
+    summary = parse_summary_html(summary_html) if summary_html else {}
+    depts = parse_department_html(dept_html) if dept_html else []
+    
+    # Build message
+    net = summary.get('net_sales', 'N/A')
+    credit = summary.get('credit', 'N/A')
+    debit = summary.get('debit', 'N/A')
+    cash = summary.get('cash', 'N/A')
+    txns = summary.get('transactions', 'N/A')
+    
+    dept_lines = "\n".join([f"  {d[0]}: ${d[1]}" for d in depts]) if depts else "  (no data)"
+    
+    msg = f"""🏪 ZOO MART — {yesterday_iso}
+━━━━━━━━━━━━━━━━━━━━
+💰 Net Sales: ${net}
+📊 {txns} transactions
+💳 Credit: ${credit}
+💳 Debit: ${debit}
+💵 Cash: ${cash}
+
+🏷️ Top Departments:
+{dept_lines}"""
+    
+    send_telegram(BOT_TOKEN, CHAT_ID, msg)
+    print("Done - report sent to Telegram")
+'''
+
+# Replace placeholders with actual values
+py_script = py_script.replace('PLACEHOLDER_TOKEN', bot_token)
+py_script = py_script.replace('PLACEHOLDER_CHAT', chat_id)
+
+# Escape the script for PowerShell embedding
+# We'll base64-encode the Python script and decode it on the PC
+import base64
+script_b64 = base64.b64encode(py_script.encode('utf-8')).decode('ascii')
+
+# Build the PowerShell one-liner
+ps = f'''powershell -NoProfile -ExecutionPolicy Bypass -Command "
+$scriptB64 = '{script_b64}';
+$scriptContent = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($scriptB64));
+$scriptPath = 'C:\\ProgramData\\ZooMart\\zoomart_report.py';
+$taskScript = 'C:\\ProgramData\\ZooMart\\run_report.bat';
+New-Item -ItemType Directory -Force -Path 'C:\\ProgramData\\ZooMart' | Out-Null;
+Set-Content -Path $scriptPath -Value $scriptContent -Encoding UTF8;
+
+# Install Python silently
+$pythonUrl = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe';
+$pythonInstaller = '$env:TEMP\\python_installer.exe';
+Write-Host 'Downloading Python...';
+(New-Object Net.WebClient).DownloadFile($pythonUrl, $pythonInstaller);
+Write-Host 'Installing Python silently...';
+Start-Process -FilePath $pythonInstaller -ArgumentList '/quiet InstallAllUsers=1 PrependPath=1 Include_test=0' -Wait;
+
+# Install required packages
+Write-Host 'Installing Python packages...';
+& 'C:\\Program Files\\Python311\\Scripts\\pip.exe' install pyautogui pygetwindow requests pillow --quiet;
+
+# Create the batch runner
+Set-Content -Path $taskScript -Value \"@echo off`r`n\\\"C:\\\\Program Files\\\\Python311\\\\python.exe\\\" $scriptPath >> C:\\\\ProgramData\\\\ZooMart\\\\log.txt 2>&1\" -Encoding ASCII;
+
+# Register scheduled task at 4:29 AM daily
+$action = New-ScheduledTaskAction -Execute $taskScript;
+$trigger = New-ScheduledTaskTrigger -Daily -At '04:29AM';
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -RunOnlyIfNetworkAvailable $true;
+$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest;
+Register-ScheduledTask -TaskName 'ZooMartReportNavigator' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force;
+
+Write-Host '---------------------------------------';
+Write-Host 'INSTALL COMPLETE';
+Write-Host 'Script: C:\\ProgramData\\ZooMart\\zoomart_report.py';
+Write-Host 'Scheduled task: ZooMartReportNavigator (4:29 AM daily)';
+Write-Host 'Finding Report Navigator now...';
+
+# Find Report Navigator exe and report back
+\$found = Get-ChildItem -Path 'C:\\' -Filter 'ReportNavigator.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName;
+if (\$found) {{ Write-Host \"Found: \$found\" }} else {{ Write-Host 'ReportNavigator.exe not found - will search at runtime' }};
+Write-Host '---------------------------------------';
+"
+'''
+
+print("PowerShell command built successfully")
+print(f"Script size: {len(py_script)} chars")
+print(f"B64 size: {len(script_b64)} chars")
+print(f"Full command size: {len(ps)} chars")
+
+# Save the command to a file for easy copy
+with open('/tmp/zoomart_install.ps1', 'w') as f:
+    f.write(ps)
+print("\nSaved to /tmp/zoomart_install.ps1")
