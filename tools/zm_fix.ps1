@@ -141,16 +141,23 @@ if __name__ == "__main__":
             sys.exit(1)
 
         # -- Now on View Reports screen --
-        # Select Period Type dropdown: click it and choose "Period 2 Example Day"
+        # Layout: LEFT side = Period Type dropdown, Period dropdown, Reports list
+        #         RIGHT side = selected reports (after Add)
+        #         Process button = bottom right
         time.sleep(1)
-        # Period Type dropdown is typically top portion of the form
-        # Click it by position relative to window
         if wins:
             win = wins[0]
             win.activate()
             time.sleep(0.5)
-            # Approximate position: upper-left of content area
-            pg.click(win.left + 180, win.top + 90)
+
+            # Coordinates relative to window
+            left_x  = win.left + int(win.width * 0.18)   # left panel dropdowns/list
+            top_y   = win.top  + int(win.height * 0.15)  # Period Type row
+            per_y   = win.top  + int(win.height * 0.25)  # Period row
+            list_y  = win.top  + int(win.height * 0.45)  # Reports list
+
+            # -- Period Type dropdown --
+            pg.click(left_x, top_y)
             time.sleep(0.5)
             pg.hotkey("ctrl","a")
             pyperclip.copy("Period 2 Example Day")
@@ -159,41 +166,37 @@ if __name__ == "__main__":
             pg.press("enter")
             time.sleep(0.5)
 
-            # Period dropdown (date): next field
-            pg.press("tab")
-            time.sleep(0.3)
+            # -- Period dropdown (yesterday's date) --
+            pg.click(left_x, per_y)
+            time.sleep(0.5)
+            pg.hotkey("ctrl","a")
             pyperclip.copy(yest_str)
-            pg.hotkey("ctrl","a"); pg.hotkey("ctrl","v")
+            pg.hotkey("ctrl","v")
             time.sleep(0.3)
-            pg.press("tab")
+            pg.press("enter")
             time.sleep(0.5)
 
-            # Report list — click Summary, then Add
-            # List is left panel, roughly 1/4 width
-            pg.click(win.left + int(win.width * 0.2), win.top + int(win.height * 0.5))
+            # -- Select Summary from reports list, click Add --
+            pg.click(left_x, list_y)
             time.sleep(0.3)
             pg.hotkey("ctrl","home")
             time.sleep(0.2)
-            pg.press("s")
+            pg.press("s")           # jump to Summary
             time.sleep(0.3)
-            # Add button
-            pg.hotkey("alt","a")
+            pg.hotkey("alt","a")    # Add
             time.sleep(0.5)
 
-            # Click Department in list, Add
-            pg.click(win.left + int(win.width * 0.2), win.top + int(win.height * 0.5))
+            # -- Select Department from reports list, click Add --
+            pg.click(left_x, list_y)
             time.sleep(0.3)
-            pg.press("d")
+            pg.press("d")           # jump to Department
             time.sleep(0.3)
-            pg.hotkey("alt","a")
+            pg.hotkey("alt","a")    # Add
             time.sleep(0.5)
 
-            # Process button
-            pg.hotkey("alt","p")
-            time.sleep(0.5)
-            # Fallback: click bottom-right of window
-            pg.click(win.left + win.width - 100, win.top + win.height - 50)
-            time.sleep(35)
+            # -- Click Process (bottom-right area of window) --
+            pg.click(win.left + int(win.width * 0.75), win.top + win.height - 60)
+            time.sleep(35)          # wait for HTML files to generate
 
     except Exception as e:
         tg("Zoo Mart automation error: " + str(e))
