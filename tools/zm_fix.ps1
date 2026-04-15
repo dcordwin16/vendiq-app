@@ -133,8 +133,8 @@ if __name__ == "__main__":
             menu_y = win.top + 30
             pg.click(win.left + 90, menu_y)
             time.sleep(0.8)
-            # Click "View Reports" in the dropdown — press V or first item
-            pg.press("v")
+            # "View Reports" is first item — just press Enter
+            pg.press("enter")
             time.sleep(1.5)
         else:
             tg("Zoo Mart: could not find main window after login")
