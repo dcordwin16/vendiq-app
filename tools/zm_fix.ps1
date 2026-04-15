@@ -128,15 +128,12 @@ if __name__ == "__main__":
             win = wins[0]
             win.activate()
             time.sleep(0.5)
-            # Menu bar items start ~8px from left edge, ~30px from top
+            # Menu bar: Session | Reports | Options | Help
+            # Click "Reports" — second menu item, ~80px from left
             menu_y = win.top + 30
-            # Session is first menu item
-            pg.click(win.left + 40, menu_y)
+            pg.click(win.left + 90, menu_y)
             time.sleep(0.8)
-            # Reports should be in the dropdown — press R or use arrow keys
-            pg.press("r")
-            time.sleep(0.8)
-            # View Reports submenu — press V or Enter
+            # Click "View Reports" in the dropdown — press V or first item
             pg.press("v")
             time.sleep(1.5)
         else:
