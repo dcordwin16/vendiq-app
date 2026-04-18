@@ -71,12 +71,14 @@ export default async function DashboardPage() {
     .gte('transaction_date', thirtyDaysAgo.toISOString())
     .order('transaction_date', { ascending: false })
 
-  // Fetch all machines
+  // Fetch all machines — exclude synthetic rollup rows from XLSX imports
   const { data: machines } = await supabase
     .from('dashboard_machines')
     .select('id, name')
     .eq('user_id', OPERATOR_UUID)
     .eq('is_active', true)
+    .neq('name', 'Unknown Machine')
+    .neq('name', 'Total')
 
   const txList: Transaction[] = (transactions30 || []) as unknown as Transaction[]
   const machineList: Machine[] = (machines || []) as unknown as Machine[]
