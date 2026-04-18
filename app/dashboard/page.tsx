@@ -32,6 +32,15 @@ function formatTime(isoString: string): string {
   }
 }
 
+/** Format a date string like "2026-04-02T..." → "Apr 2" */
+function fmtDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  } catch {
+    return iso.slice(0, 10)
+  }
+}
+
 interface Transaction {
   id: string
   transaction_date: string
@@ -63,12 +72,11 @@ export default async function DashboardPage() {
   const todayStr = now.toISOString().split('T')[0]
   const yesterdayStr = new Date(now.getTime() - 86400000).toISOString().split('T')[0]
 
-  // Fetch last 30 days transactions
-  const { data: transactions30 } = await supabase
+  // Fetch transactions — use all available data, not just 30 days
+  const { data: allTransactions } = await supabase
     .from('dashboard_transactions')
     .select('id, transaction_date, product_name, amount_cents, payment_type, machine_id, dashboard_machines(name)')
     .eq('user_id', OPERATOR_UUID)
-    .gte('transaction_date', thirtyDaysAgo.toISOString())
     .order('transaction_date', { ascending: false })
 
   // Fetch all machines — exclude synthetic rollup rows from XLSX imports
@@ -80,13 +88,31 @@ export default async function DashboardPage() {
     .neq('name', 'Unknown Machine')
     .neq('name', 'Total')
 
-  const txList: Transaction[] = (transactions30 || []) as unknown as Transaction[]
+  const txList: Transaction[] = (allTransactions || []) as unknown as Transaction[]
   const machineList: Machine[] = (machines || []) as unknown as Machine[]
 
   // Check if we have any data at all
   const hasData = txList.length > 0 || machineList.length > 0
 
-  // ---- Top stats ----
+  // ---- Compute actual data date range ----
+  const txDates = txList
+    .map(t => t.transaction_date)
+    .filter(Boolean)
+    .sort()
+  const earliestTx = txDates[0] ?? null
+  const latestTx = txDates[txDates.length - 1] ?? null
+
+  // Human-readable range label, e.g. "Apr 2 – Apr 18"
+  const dataRangeLabel = earliestTx && latestTx
+    ? fmtDate(earliestTx) === fmtDate(latestTx)
+      ? fmtDate(latestTx)
+      : `${fmtDate(earliestTx)} – ${fmtDate(latestTx)}`
+    : null
+
+  // Column label for the rightmost machine table column
+  const rangeColumnLabel = dataRangeLabel ?? '30 Days'
+
+  // ---- Top stats (all available data) ----
   const totalRevenueCents = txList.reduce((s, t) => s + (t.amount_cents || 0), 0)
   const totalTransactions = txList.length
   const activeMachinesCount = machineList.length
@@ -99,7 +125,7 @@ export default async function DashboardPage() {
     today: number
     yesterday: number
     last7: number
-    last30: number
+    allTime: number
     topProduct: string
   }
 
@@ -118,7 +144,7 @@ export default async function DashboardPage() {
       .filter(t => t.transaction_date && t.transaction_date >= sevenDaysAgo.toISOString())
       .reduce((s, t) => s + (t.amount_cents || 0), 0)
 
-    const thirtyDayRevenue = machineTx
+    const allTimeRevenue = machineTx
       .reduce((s, t) => s + (t.amount_cents || 0), 0)
 
     // Top product
@@ -135,10 +161,10 @@ export default async function DashboardPage() {
       today: todayRevenue,
       yesterday: yesterdayRevenue,
       last7: sevenDayRevenue,
-      last30: thirtyDayRevenue,
+      allTime: allTimeRevenue,
       topProduct,
     }
-  }).sort((a, b) => b.last30 - a.last30)
+  }).sort((a, b) => b.allTime - a.allTime)
 
   // ---- Recent transactions ----
   const recentTx = txList.slice(0, 20)
@@ -159,9 +185,11 @@ export default async function DashboardPage() {
           Welcome back, {firstName} 👋
         </h1>
         <p className="text-gray-400 mt-1">
-          {hasData
-            ? "Here's an overview of your vending operation — last 30 days."
-            : "Here's an overview of your vending operation."}
+          {hasData && dataRangeLabel
+            ? `Showing data from ${dataRangeLabel}.`
+            : hasData
+            ? 'Here\'s an overview of your vending operation.'
+            : 'Here\'s an overview of your vending operation.'}
         </p>
       </div>
 
@@ -170,14 +198,14 @@ export default async function DashboardPage() {
         <StatCard
           title="Total Revenue"
           value={formatCurrency(totalRevenueCents)}
-          subtitle="Last 30 days"
+          subtitle={dataRangeLabel ?? 'All time'}
           icon={<DollarSign className="w-5 h-5" />}
           accent="blue"
         />
         <StatCard
           title="Transactions"
           value={totalTransactions.toLocaleString()}
-          subtitle="Last 30 days"
+          subtitle={dataRangeLabel ?? 'All time'}
           icon={<ShoppingCart className="w-5 h-5" />}
           accent="green"
         />
@@ -191,7 +219,7 @@ export default async function DashboardPage() {
         <StatCard
           title="Avg / Machine"
           value={formatCurrency(avgPerMachine)}
-          subtitle="Last 30 days"
+          subtitle={dataRangeLabel ?? 'All time'}
           icon={<TrendingUp className="w-5 h-5" />}
           accent="orange"
         />
@@ -222,7 +250,9 @@ export default async function DashboardPage() {
             <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
                 <h2 className="text-white font-semibold">Machine Performance</h2>
-                <span className="text-gray-400 text-sm">Last 30 days</span>
+                {dataRangeLabel && (
+                  <span className="text-gray-400 text-sm">{dataRangeLabel}</span>
+                )}
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -232,7 +262,7 @@ export default async function DashboardPage() {
                       <th className="text-right text-xs text-gray-400 uppercase tracking-wider px-4 py-3">Today</th>
                       <th className="text-right text-xs text-gray-400 uppercase tracking-wider px-4 py-3">Yesterday</th>
                       <th className="text-right text-xs text-gray-400 uppercase tracking-wider px-4 py-3">7 Days</th>
-                      <th className="text-right text-xs text-gray-400 uppercase tracking-wider px-4 py-3">30 Days</th>
+                      <th className="text-right text-xs text-gray-400 uppercase tracking-wider px-4 py-3">{rangeColumnLabel}</th>
                       <th className="text-left text-xs text-gray-400 uppercase tracking-wider px-6 py-3">Top Product</th>
                     </tr>
                   </thead>
@@ -263,7 +293,7 @@ export default async function DashboardPage() {
                             <span className="text-gray-300 text-sm">{formatCurrency(m.last7)}</span>
                           </td>
                           <td className="px-4 py-4 text-right">
-                            <span className="text-white text-sm font-medium">{formatCurrency(m.last30)}</span>
+                            <span className="text-white text-sm font-medium">{formatCurrency(m.allTime)}</span>
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-gray-300 text-sm truncate max-w-[150px] block">{m.topProduct}</span>
