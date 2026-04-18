@@ -39,25 +39,60 @@ function parseTSVWithBOM(text: string): Record<string, string>[] {
 /**
  * Parse XLSX or XLS buffer into the same row structure as parseTSVWithBOM.
  * Handles both the Transaction CSV format AND the Sales By Product report format.
+ *
+ * Nayax Sales By Product quirks:
+ * - Uses inlineStr cell type (xlsx handles this automatically with dense mode)
+ * - Row 0 is a metadata row ("Sales Summary", date range) — must be skipped
+ * - Row 1 is the real header row
+ * - Column names have trailing spaces that must be trimmed
  */
 function parseExcelBuffer(buffer: ArrayBuffer): Record<string, string>[] {
-  const workbook = XLSX.read(buffer, { type: 'array' })
-  // Use first sheet
+  const workbook = XLSX.read(buffer, { type: 'array', dense: true })
   const sheetName = workbook.SheetNames[0]
   const sheet = workbook.Sheets[sheetName]
-  // Convert to array of objects (header row becomes keys)
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+
+  // sheet_to_json with header:1 gives us an array-of-arrays, letting us
+  // manually handle the metadata row skip and header trimming.
+  const allRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
     defval: '',
-    raw: false, // format all values as strings
+    raw: false,
   })
-  // Normalise all values to strings and trim
-  return rawRows.map(r => {
-    const normalised: Record<string, string> = {}
-    for (const [k, v] of Object.entries(r)) {
-      normalised[k.trim()] = String(v ?? '').trim()
-    }
-    return normalised
-  })
+
+  if (allRows.length < 2) return []
+
+  // Detect if row 0 is a metadata row (Sales By Product pattern):
+  // row 0 col 0 is something like "Sales Summary" or contains a date range,
+  // NOT a real column header. Row 1 in that case holds the real headers.
+  const firstCell = String((allRows[0] as unknown[])[0] ?? '').trim()
+  const isMetadataFirst =
+    firstCell.toLowerCase().includes('sales') ||
+    firstCell.toLowerCase().includes('summary') ||
+    firstCell.toLowerCase().includes('report') ||
+    firstCell === '' ||
+    // Real header rows start with "Product" or known column names
+    !firstCell.toLowerCase().startsWith('product')
+
+  const headerRowIdx = isMetadataFirst ? 1 : 0
+  const dataStartIdx = headerRowIdx + 1
+
+  if (allRows.length <= dataStartIdx) return []
+
+  // Build trimmed header array
+  const headers = (allRows[headerRowIdx] as unknown[]).map(h => String(h ?? '').trim())
+
+  const rows: Record<string, string>[] = []
+  for (let i = dataStartIdx; i < allRows.length; i++) {
+    const cells = allRows[i] as unknown[]
+    // Skip completely empty rows
+    if (cells.every(c => String(c ?? '').trim() === '')) continue
+    const row: Record<string, string> = {}
+    headers.forEach((h, idx) => {
+      row[h] = String(cells[idx] ?? '').trim()
+    })
+    rows.push(row)
+  }
+  return rows
 }
 
 function cleanProductName(raw: string): string {
@@ -75,13 +110,14 @@ function parseCents(val: string): number {
  * Detect whether this is a "Sales By Product" report (from XLSX export)
  * vs the standard transaction CSV.  Sales By Product has "Product Name" and
  * "Total Transaction Amount" columns but no "machine_name" column.
+ * Column names are already trimmed by parseExcelBuffer.
  */
 function isSalesByProductReport(rows: Record<string, string>[]): boolean {
   if (rows.length === 0) return false
   const keys = Object.keys(rows[0])
   return (
     keys.includes('Product Name') &&
-    keys.includes('Total Transaction Amount') &&
+    (keys.includes('Total Transaction Amount') || keys.includes('Total Transaction/Vend Count')) &&
     !keys.includes('machine_name')
   )
 }
@@ -89,36 +125,37 @@ function isSalesByProductReport(rows: Record<string, string>[]): boolean {
 /**
  * Map a Sales By Product row into a pseudo-transaction row so the existing
  * insert logic can handle it with minimal changes.
- * Columns: Product Name, Product ID, Product Barcode, Catalog Number,
- *          Credit Card, Credit Card Transaction Count, Monyx App,
- *          Cash, Cash Transaction Count, Currency,
- *          Total Transaction Count, Total Transaction Amount
+ *
+ * Exact column names (after trimming trailing spaces from the XLSX):
+ *   Product Name, Product ID, Product Barcode, Catalog Number,
+ *   Credit Card, Credit Card Transaction Count,
+ *   Monyx App Using Monyx Balance, Monyx App Using Monyx Balance Transaction Count,
+ *   Cash, Cash Transaction Count, Currency,
+ *   Total Transaction/Vend Count, Total Transaction Amount
  */
 function mapSalesByProductRows(
   rows: Record<string, string>[],
   machineName: string
 ): Record<string, string>[] {
-  return rows.map((r, idx) => ({
-    machine_name: machineName,
-    product_name: r['Product Name'] || '',
-    product_id: r['Product ID'] || '',
-    product_barcode: r['Product Barcode'] || '',
-    catalog_number: r['Catalog Number'] || '',
-    credit_card_amount: r['Credit Card'] || '0',
-    credit_card_tx_count: r['Credit Card Transaction Count'] || '0',
-    monyx_app_amount: r['Monyx App'] || '0',
-    cash_amount: r['Cash'] || '0',
-    cash_tx_count: r['Cash Transaction Count'] || '0',
-    currency: r['Currency'] || 'USD',
-    total_tx_count: r['Total Transaction Count'] || '0',
-    total_tx_amount: r['Total Transaction Amount'] || '0',
-    // Synthetic transaction_id so dedup works
-    transaction_id: `sbp-${machineName}-${r['Product ID'] || idx}-${Date.now()}`,
-    // Use today as date since SBP report doesn't have per-transaction dates
-    machineAuTime_Date: new Date().toISOString().slice(0, 10),
-    auValue: r['Total Transaction Amount'] || '0',
-    payment_method_descr: 'Mixed',
-  }))
+  return rows.map((r, idx) => {
+    const productId = r['Product ID'] || String(idx)
+    return {
+      machine_name: machineName,
+      product_name: r['Product Name'] || '',
+      product_id: productId,
+      product_barcode: r['Product Barcode'] || '',
+      catalog_number: r['Catalog Number'] || '',
+      currency: r['Currency'] || 'USD',
+      // Synthetic transaction_id for dedup
+      transaction_id: `sbp-${machineName}-${productId}-${Date.now()}-${idx}`,
+      // Use today as date (SBP is an aggregated report, no per-tx dates)
+      machineAuTime_Date: new Date().toISOString().slice(0, 10),
+      // Amount and quantity from the correct trimmed column names
+      auValue: r['Total Transaction Amount'] || '0',
+      total_tx_count: r['Total Transaction/Vend Count'] || '0',
+      payment_method_descr: 'Mixed',
+    }
+  })
 }
 
 export async function POST(req: NextRequest) {
@@ -260,6 +297,8 @@ export async function POST(req: NextRequest) {
     const paymentType = row.payment_method_descr || null
     const productCategory = row.product_group_descr || null
     const slotNumber = row.product_code_in_map || null
+    // For SBP reports, total_tx_count holds the vend count; for transaction CSVs it's always 1
+    const quantity = row.total_tx_count ? (parseInt(row.total_tx_count, 10) || 1) : 1
 
     transactionBatch.push({
       user_id: '00000000-0000-0000-0000-000000000001',
@@ -270,7 +309,7 @@ export async function POST(req: NextRequest) {
       product_sku: slotNumber,
       amount_cents: amountCents,
       cost_cents: costCents,
-      quantity: 1,
+      quantity,
       payment_type: paymentType,
       product_category: productCategory,
       transaction_id: txId,
