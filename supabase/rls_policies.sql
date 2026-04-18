@@ -19,6 +19,16 @@ CREATE POLICY "allow_anon_insert_csv_uploads"
   ON dashboard_csv_uploads FOR INSERT TO anon WITH CHECK (true);
 
 -- ============================================================
+-- Allow anon to DELETE (needed for admin cleanup of synthetic rows)
+-- ============================================================
+
+CREATE POLICY "allow_anon_delete_transactions"
+  ON dashboard_transactions FOR DELETE TO anon USING (true);
+
+CREATE POLICY "allow_anon_delete_machines"
+  ON dashboard_machines FOR DELETE TO anon USING (true);
+
+-- ============================================================
 -- Allow anon to SELECT all rows
 -- ============================================================
 
