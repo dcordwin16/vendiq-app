@@ -123,6 +123,54 @@ function isSalesByProductReport(rows: Record<string, string>[]): boolean {
 }
 
 /**
+ * Detect whether this is a "Sales By Machine" report (from XLSX export).
+ * First column is "Machine Name"; no "Product Name" column.
+ * Columns: Machine Name, Client Number, Operator Identifier, Machine Serial Number,
+ *          Location Number, Machine Group, Credit Card, Monyx App Using Monyx Balance,
+ *          Cash, Currency, Total Transaction/Vend Count, Total Transaction Amount
+ */
+function isSalesByMachineReport(rows: Record<string, string>[]): boolean {
+  if (rows.length === 0) return false
+  const keys = Object.keys(rows[0])
+  return (
+    keys.includes('Machine Name') &&
+    (keys.includes('Total Transaction Amount') || keys.includes('Total Transaction/Vend Count')) &&
+    !keys.includes('machine_name') &&
+    !keys.includes('Product Name')
+  )
+}
+
+/**
+ * Map a Sales By Machine row into a pseudo-transaction row.
+ * Each row represents aggregate revenue for one machine over the report period.
+ */
+function mapSalesByMachineRows(rows: Record<string, string>[]): Record<string, string>[] {
+  return rows.map((r, idx) => {
+    const machineName = r['Machine Name'] || `Unknown Machine ${idx}`
+    const serialNumber = r['Machine Serial Number'] || ''
+    return {
+      machine_name: machineName,
+      machine_serial: serialNumber,
+      client_number: r['Client Number'] || '',
+      operator_id: r['Operator Identifier'] || '',
+      location_number: r['Location Number'] || '',
+      machine_group: r['Machine Group'] || '',
+      currency: r['Currency'] || 'USD',
+      // Synthetic transaction_id for dedup
+      transaction_id: `sbm-${machineName}-${serialNumber}-${Date.now()}-${idx}`,
+      // Use today as date (SBM is an aggregated report, no per-tx dates)
+      machineAuTime_Date: new Date().toISOString().slice(0, 10),
+      // Amount and quantity mapped to the standard field names
+      auValue: r['Total Transaction Amount'] || '0',
+      total_tx_count: r['Total Transaction/Vend Count'] || '0',
+      payment_method_descr: 'Mixed',
+      // No product info in this report
+      product_name: 'Sales Total',
+    }
+  })
+}
+
+/**
  * Map a Sales By Product row into a pseudo-transaction row so the existing
  * insert logic can handle it with minimal changes.
  *
@@ -214,9 +262,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'File appears empty or invalid' }, { status: 400 })
   }
 
-  // If this is a Sales By Product report, remap into transaction-compatible rows
-  if (isSalesByProductReport(rows)) {
+  // Detect report type before remapping (detection checks original column names)
+  const reportType = isSalesByProductReport(rows) ? 'sales_by_product'
+    : isSalesByMachineReport(rows) ? 'sales_by_machine'
+    : 'transactions'
+
+  // Remap specialised report formats into transaction-compatible rows
+  if (reportType === 'sales_by_product') {
     rows = mapSalesByProductRows(rows, machineNameHint)
+  } else if (reportType === 'sales_by_machine') {
+    rows = mapSalesByMachineRows(rows)
   }
 
   const supabase = getSupabaseAdmin()
@@ -357,5 +412,6 @@ export async function POST(req: NextRequest) {
     machines: Object.keys(machineMap),
     date_range: { start: minDate, end: maxDate },
     file_format: isExcel ? 'excel' : 'csv',
+    report_type: reportType,
   })
 }
