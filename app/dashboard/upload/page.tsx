@@ -9,22 +9,29 @@ interface UploadResult {
   rows_imported: number
   machines: string[]
   date_range: { start: string; end: string }
+  file_format?: string
   error?: string
 }
+
+const ACCEPTED_EXTENSIONS = ['.csv', '.xlsx', '.xls']
 
 export default function UploadPage() {
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [result, setResult] = useState<UploadResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleFile = async (file: File) => {
-    if (!file.name.endsWith('.csv') && !file.name.endsWith('.txt') && !file.name.endsWith('.tsv')) {
-      setError('Please upload a CSV file exported from Nayax.')
+    const nameLower = file.name.toLowerCase()
+    const validExt = ACCEPTED_EXTENSIONS.some(ext => nameLower.endsWith(ext))
+    if (!validExt) {
+      setError('Please upload a CSV, XLSX, or XLS file exported from Nayax.')
       return
     }
 
+    setSelectedFile(file.name)
     setIsUploading(true)
     setError(null)
     setResult(null)
@@ -76,6 +83,7 @@ export default function UploadPage() {
   const handleReset = () => {
     setResult(null)
     setError(null)
+    setSelectedFile(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -100,8 +108,8 @@ export default function UploadPage() {
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <div>
-          <h1 className="text-2xl font-bold text-white">Upload Nayax CSV</h1>
-          <p className="text-gray-400 mt-0.5 text-sm">Import transaction data from your Nayax CSV export</p>
+          <h1 className="text-2xl font-bold text-white">Upload Nayax CSV or Excel file</h1>
+          <p className="text-gray-400 mt-0.5 text-sm">Import transaction or sales data from your Nayax export</p>
         </div>
       </div>
 
@@ -125,7 +133,7 @@ export default function UploadPage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv,.txt,.tsv"
+                accept=".csv,.xlsx,.xls"
                 className="hidden"
                 onChange={handleInputChange}
                 disabled={isUploading}
@@ -134,7 +142,11 @@ export default function UploadPage() {
               {isUploading ? (
                 <div className="flex flex-col items-center gap-3">
                   <Loader2 className="w-10 h-10 text-blue-400 animate-spin" />
-                  <p className="text-white font-medium">Parsing and importing transactions...</p>
+                  <p className="text-white font-medium">
+                    {selectedFile && (selectedFile.endsWith('.xlsx') || selectedFile.endsWith('.xls'))
+                      ? 'Parsing Excel file and importing data...'
+                      : 'Parsing and importing transactions...'}
+                  </p>
                   <p className="text-gray-400 text-sm">This may take a moment for large files</p>
                 </div>
               ) : (
@@ -142,8 +154,13 @@ export default function UploadPage() {
                   <div className="w-14 h-14 bg-gray-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
                     <Upload className="w-7 h-7 text-gray-400" />
                   </div>
-                  <p className="text-white font-medium mb-1">Drop your Nayax CSV here</p>
-                  <p className="text-gray-400 text-sm mb-4">or click to browse files</p>
+                  <p className="text-white font-medium mb-1">Drop your Nayax file here</p>
+                  <p className="text-gray-400 text-sm mb-2">or click to browse</p>
+                  <div className="flex items-center justify-center gap-2 mb-4">
+                    <span className="bg-gray-700 text-gray-300 text-xs px-2 py-0.5 rounded font-mono">.csv</span>
+                    <span className="bg-gray-700 text-gray-300 text-xs px-2 py-0.5 rounded font-mono">.xlsx</span>
+                    <span className="bg-gray-700 text-gray-300 text-xs px-2 py-0.5 rounded font-mono">.xls</span>
+                  </div>
                   <button
                     type="button"
                     className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors pointer-events-none"
@@ -177,9 +194,16 @@ export default function UploadPage() {
               <div className="flex-1 min-w-0">
                 <h2 className="text-white font-semibold text-lg">Import complete!</h2>
                 <p className="text-gray-300 mt-1">
-                  Imported <span className="text-white font-bold">{result.rows_imported.toLocaleString()}</span> transactions
-                  {' '}from <span className="text-white font-bold">{result.machines.length}</span> machine{result.machines.length !== 1 ? 's' : ''}
+                  Imported <span className="text-white font-bold">{result.rows_imported.toLocaleString()}</span> rows
+                  {result.machines.length > 0 && (
+                    <> from <span className="text-white font-bold">{result.machines.length}</span> machine{result.machines.length !== 1 ? 's' : ''}</>
+                  )}
                 </p>
+                {result.file_format && (
+                  <p className="text-gray-500 text-xs mt-0.5">
+                    {result.file_format === 'excel' ? 'Parsed from Excel (.xlsx/.xls)' : 'Parsed from CSV'}
+                  </p>
+                )}
                 {result.date_range?.start && (
                   <p className="text-gray-400 text-sm mt-1">
                     {formatDate(result.date_range.start)} — {formatDate(result.date_range.end)}
@@ -220,16 +244,28 @@ export default function UploadPage() {
 
         {/* Instructions */}
         <div className="bg-gray-800 rounded-2xl border border-gray-700 p-6">
-          <p className="text-gray-300 text-sm font-medium mb-3">How to export from Nayax:</p>
-          <ol className=\"text-gray-400 text-sm space-y-1.5 list-decimal list-inside\">
-            <li>Log in to <a href=\"https://my.nayax.com\" target=\"_blank\" className=\"text-blue-400 hover:underline\">my.nayax.com</a></li>
-            <li>Go to Reports → Online Reports → Sales Summary</li>
-            <li>Select your Actor (operator name) and set your date range</li>
-            <li>Click <strong className=\"text-gray-300\">View Report</strong>, then <strong className=\"text-gray-300\">Export → Export to CSV</strong></li>
-            <li>Upload the downloaded file here</li>
-          </ol>
-          <p className="text-gray-500 text-xs mt-3">
-            Nayax exports tab-separated CSV files. VendIQ will automatically detect the format.
+          <p className="text-gray-300 text-sm font-medium mb-3">Supported Nayax exports:</p>
+          <div className="space-y-4">
+            <div>
+              <p className="text-gray-300 text-sm font-medium mb-1.5">Transaction CSV (Sales Summary)</p>
+              <ol className="text-gray-400 text-sm space-y-1 list-decimal list-inside">
+                <li>Go to Reports → Online Reports → Sales Summary</li>
+                <li>Select your Actor and set your date range</li>
+                <li>Click <strong className="text-gray-300">View Report</strong> → <strong className="text-gray-300">Export → CSV</strong></li>
+              </ol>
+            </div>
+            <div className="border-t border-gray-700 pt-4">
+              <p className="text-gray-300 text-sm font-medium mb-1.5">Sales By Product Report (XLSX)</p>
+              <ol className="text-gray-400 text-sm space-y-1 list-decimal list-inside">
+                <li>Go to Reports → Online Reports → Sales By Product</li>
+                <li>Select your machine and date range</li>
+                <li>Click <strong className="text-gray-300">View Report</strong> → <strong className="text-gray-300">Export → Excel (XLSX)</strong></li>
+                <li>Upload the <span className="font-mono text-xs bg-gray-700 px-1 py-0.5 rounded">.xlsx</span> file here</li>
+              </ol>
+            </div>
+          </div>
+          <p className="text-gray-500 text-xs mt-4">
+            VendIQ auto-detects the file format and report type. CSV, XLSX, and XLS are all supported.
           </p>
         </div>
       </div>
