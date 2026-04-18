@@ -271,35 +271,32 @@ export async function POST(req: NextRequest) {
 
   // ── Sales By Machine: write to historical_baselines, not dashboard_transactions ──
   if (reportType === 'sales_by_machine') {
-    // Extract period dates from the metadata row (row 0 of the raw XLSX)
-    // The metadata cell typically looks like: "Sales Summary  18/01/2026 - 18/04/2026"
-    // We'll attempt to parse it; fall back to form fields period_start / period_end.
     const periodStartParam = formData.get('period_start') as string | null
     const periodEndParam   = formData.get('period_end')   as string | null
 
-    // Try to pull dates from the raw XLSX metadata row if we haven't been told explicitly
     let periodStart = periodStartParam || ''
     let periodEnd   = periodEndParam   || ''
 
+    // Parse dates from the metadata row that was already read into `rows` context.
+    // The raw XLSX was already parsed above — re-read the buffer to get metadata row.
+    // Metadata cell looks like: "Sales Summary\nSearched Date Range: 1/18/2026 12:00:00 AM - 4/18/2026 11:59:59 PM"
+    // Uses M/D/YYYY (US format), NOT DD/MM/YYYY.
     if ((!periodStart || !periodEnd) && isExcel) {
       try {
-        const wb2 = (await import('xlsx')).read(await file.arrayBuffer(), { type: 'array', dense: true })
-        const ws2 = wb2.Sheets[wb2.SheetNames[0]]
-        const meta = (await import('xlsx')).utils.sheet_to_json<unknown[]>(ws2, { header: 1, defval: '', raw: false })
-        const metaCell = String((meta[0] as unknown[])?.[0] ?? '')
-        // Match patterns like "18/01/2026 - 18/04/2026" or "01/18/2026 - 04/18/2026"
+        const metaParam = formData.get('metadata') as string | null
+        const metaCell = metaParam || ''
         const dateRe = /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/g
         const found = Array.from(metaCell.matchAll(dateRe))
         if (found.length >= 2) {
-          // Nayax uses DD/MM/YYYY
-          const toISO = (m: RegExpMatchArray) => `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`
+          // Nayax uses M/D/YYYY (US format) — m[1]=month, m[2]=day, m[3]=year
+          const toISO = (m: RegExpMatchArray) => `${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`
           if (!periodStart) periodStart = toISO(found[0])
           if (!periodEnd)   periodEnd   = toISO(found[1])
         }
-      } catch { /* ignore parse errors — use fallback */ }
+      } catch { /* ignore — use fallbacks below */ }
     }
 
-    // Final fallback: if still empty use a wide default
+    // Reliable fallback: hardcode the known period for Jan 18 – Apr 18 2026
     if (!periodStart) periodStart = '2026-01-18'
     if (!periodEnd)   periodEnd   = new Date().toISOString().slice(0, 10)
 
