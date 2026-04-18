@@ -141,9 +141,11 @@ function isSalesByMachineReport(rows: Record<string, string>[]): boolean {
 }
 
 /**
- * Map a Sales By Machine row into a pseudo-transaction row.
- * Each row represents aggregate revenue for one machine over the report period.
+ * Map a Sales By Machine row — kept for reference but no longer used in the POST handler.
+ * SBM reports now go directly to historical_baselines, not dashboard_transactions.
+ * @deprecated Use the historical_baselines path in POST instead.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function mapSalesByMachineRows(rows: Record<string, string>[]): Record<string, string>[] {
   return rows.map((r, idx) => {
     const machineName = r['Machine Name'] || `Unknown Machine ${idx}`
@@ -267,11 +269,95 @@ export async function POST(req: NextRequest) {
     : isSalesByMachineReport(rows) ? 'sales_by_machine'
     : 'transactions'
 
-  // Remap specialised report formats into transaction-compatible rows
+  // ── Sales By Machine: write to historical_baselines, not dashboard_transactions ──
+  if (reportType === 'sales_by_machine') {
+    // Extract period dates from the metadata row (row 0 of the raw XLSX)
+    // The metadata cell typically looks like: "Sales Summary  18/01/2026 - 18/04/2026"
+    // We'll attempt to parse it; fall back to form fields period_start / period_end.
+    const periodStartParam = formData.get('period_start') as string | null
+    const periodEndParam   = formData.get('period_end')   as string | null
+
+    // Try to pull dates from the raw XLSX metadata row if we haven't been told explicitly
+    let periodStart = periodStartParam || ''
+    let periodEnd   = periodEndParam   || ''
+
+    if ((!periodStart || !periodEnd) && isExcel) {
+      try {
+        const wb2 = (await import('xlsx')).read(await file.arrayBuffer(), { type: 'array', dense: true })
+        const ws2 = wb2.Sheets[wb2.SheetNames[0]]
+        const meta = (await import('xlsx')).utils.sheet_to_json<unknown[]>(ws2, { header: 1, defval: '', raw: false })
+        const metaCell = String((meta[0] as unknown[])?.[0] ?? '')
+        // Match patterns like "18/01/2026 - 18/04/2026" or "01/18/2026 - 04/18/2026"
+        const dateRe = /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/g
+        const found = Array.from(metaCell.matchAll(dateRe))
+        if (found.length >= 2) {
+          // Nayax uses DD/MM/YYYY
+          const toISO = (m: RegExpMatchArray) => `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`
+          if (!periodStart) periodStart = toISO(found[0])
+          if (!periodEnd)   periodEnd   = toISO(found[1])
+        }
+      } catch { /* ignore parse errors — use fallback */ }
+    }
+
+    // Final fallback: if still empty use a wide default
+    if (!periodStart) periodStart = '2026-01-18'
+    if (!periodEnd)   periodEnd   = new Date().toISOString().slice(0, 10)
+
+    const supabase = getSupabaseAdmin()
+    const baselineRows = rows.map(r => ({
+      user_id:           '00000000-0000-0000-0000-000000000001',
+      machine_name:      (r['Machine Name'] || '').trim(),
+      machine_serial:    (r['Machine Serial Number'] || '').trim() || null,
+      period_start:      periodStart,
+      period_end:        periodEnd,
+      total_revenue:     parseCents(r['Total Transaction Amount'] || '0'),
+      transaction_count: parseInt(r['Total Transaction/Vend Count'] || '0', 10) || 0,
+      source_file:       file.name,
+    })).filter(r => r.machine_name && r.machine_name !== 'Total')
+
+    const { error: blErr } = await supabase
+      .from('historical_baselines')
+      .upsert(baselineRows, {
+        onConflict: 'user_id,machine_name,period_start,period_end',
+        ignoreDuplicates: false,
+      })
+
+    if (blErr) {
+      console.error('historical_baselines upsert error:', blErr)
+      return NextResponse.json({ error: 'Failed to save historical baseline', detail: blErr.message }, { status: 500 })
+    }
+
+    // Also ensure each machine exists in dashboard_machines (creates if missing)
+    for (const r of baselineRows) {
+      const { data: existing } = await supabase
+        .from('dashboard_machines')
+        .select('id')
+        .eq('name', r.machine_name)
+        .limit(1)
+        .maybeSingle()
+      if (!existing) {
+        await supabase.from('dashboard_machines').insert({
+          user_id:  '00000000-0000-0000-0000-000000000001',
+          name:     r.machine_name,
+          nayax_device_id: r.machine_serial,
+          is_active: true,
+        })
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      rows_imported: baselineRows.length,
+      machines: baselineRows.map(r => r.machine_name),
+      period: { start: periodStart, end: periodEnd },
+      file_format: 'excel',
+      report_type: 'sales_by_machine',
+    })
+  }
+
+  // Remap Sales By Product into transaction-compatible rows
   if (reportType === 'sales_by_product') {
     rows = mapSalesByProductRows(rows, machineNameHint)
-  } else if (reportType === 'sales_by_machine') {
-    rows = mapSalesByMachineRows(rows)
   }
 
   const supabase = getSupabaseAdmin()

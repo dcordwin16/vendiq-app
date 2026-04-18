@@ -8,8 +8,10 @@ interface UploadResult {
   success: boolean
   rows_imported: number
   machines: string[]
-  date_range: { start: string; end: string }
+  date_range?: { start: string; end: string }
+  period?: { start: string; end: string }
   file_format?: string
+  report_type?: string
   error?: string
 }
 
@@ -193,18 +195,29 @@ export default function UploadPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <h2 className="text-white font-semibold text-lg">Import complete!</h2>
-                <p className="text-gray-300 mt-1">
-                  Imported <span className="text-white font-bold">{result.rows_imported.toLocaleString()}</span> rows
-                  {result.machines.length > 0 && (
-                    <> from <span className="text-white font-bold">{result.machines.length}</span> machine{result.machines.length !== 1 ? 's' : ''}</>
-                  )}
-                </p>
-                {result.file_format && (
-                  <p className="text-gray-500 text-xs mt-0.5">
-                    {result.file_format === 'excel' ? 'Parsed from Excel (.xlsx/.xls)' : 'Parsed from CSV'}
+                {result.report_type === 'sales_by_machine' ? (
+                  <p className="text-gray-300 mt-1">
+                    Saved historical baseline for <span className="text-white font-bold">{result.rows_imported}</span> machine{result.rows_imported !== 1 ? 's' : ''}
+                    {result.period?.start && (
+                      <> · <span className="text-white font-bold">{formatDate(result.period.start)} – {formatDate(result.period.end)}</span></>
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-gray-300 mt-1">
+                    Imported <span className="text-white font-bold">{result.rows_imported.toLocaleString()}</span> rows
+                    {result.machines.length > 0 && (
+                      <> from <span className="text-white font-bold">{result.machines.length}</span> machine{result.machines.length !== 1 ? 's' : ''}</>
+                    )}
                   </p>
                 )}
-                {result.date_range?.start && (
+                {result.file_format && (
+                  <p className="text-gray-500 text-xs mt-0.5">
+                    {result.report_type === 'sales_by_machine'
+                      ? 'Stored in historical_baselines — will not double-count with live SQS data'
+                      : result.file_format === 'excel' ? 'Parsed from Excel (.xlsx/.xls)' : 'Parsed from CSV'}
+                  </p>
+                )}
+                {result.date_range?.start && !result.period && (
                   <p className="text-gray-400 text-sm mt-1">
                     {formatDate(result.date_range.start)} — {formatDate(result.date_range.end)}
                   </p>

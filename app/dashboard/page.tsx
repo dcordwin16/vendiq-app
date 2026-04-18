@@ -5,7 +5,6 @@ import StatCard from '@/components/StatCard'
 import { DollarSign, ShoppingCart, Package, TrendingUp, Upload } from 'lucide-react'
 import Link from 'next/link'
 
-// Sentinel UUID for NextAuth single-operator mode
 const OPERATOR_UUID = '00000000-0000-0000-0000-000000000001'
 
 function getSupabaseAdmin() {
@@ -16,9 +15,7 @@ function getSupabaseAdmin() {
 
 function formatCurrency(cents: number): string {
   return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
+    style: 'currency', currency: 'USD', minimumFractionDigits: 2,
   }).format(cents / 100)
 }
 
@@ -27,18 +24,13 @@ function formatTime(isoString: string): string {
     const d = new Date(isoString)
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
       ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
-  } catch {
-    return isoString
-  }
+  } catch { return isoString }
 }
 
-/** Format a date string like "2026-04-02T..." → "Apr 2" */
 function fmtDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  } catch {
-    return iso.slice(0, 10)
-  }
+  } catch { return iso.slice(0, 10) }
 }
 
 interface Transaction {
@@ -56,30 +48,34 @@ interface Machine {
   name: string
 }
 
+interface Baseline {
+  machine_name: string
+  period_start: string
+  period_end: string
+  total_revenue: number
+  transaction_count: number
+}
+
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions)
   const firstName = session?.user?.name?.split(' ')[0] ||
-    session?.user?.email?.split('@')[0] ||
-    'there'
+    session?.user?.email?.split('@')[0] || 'there'
 
   const supabase = getSupabaseAdmin()
 
   const now = new Date()
-  const thirtyDaysAgo = new Date(now)
-  thirtyDaysAgo.setDate(now.getDate() - 30)
-  const sevenDaysAgo = new Date(now)
-  sevenDaysAgo.setDate(now.getDate() - 7)
+  const sevenDaysAgo = new Date(now); sevenDaysAgo.setDate(now.getDate() - 7)
   const todayStr = now.toISOString().split('T')[0]
   const yesterdayStr = new Date(now.getTime() - 86400000).toISOString().split('T')[0]
 
-  // Fetch transactions — use all available data, not just 30 days
+  // Fetch all SQS transactions
   const { data: allTransactions } = await supabase
     .from('dashboard_transactions')
     .select('id, transaction_date, product_name, amount_cents, payment_type, machine_id, dashboard_machines(name)')
     .eq('user_id', OPERATOR_UUID)
     .order('transaction_date', { ascending: false })
 
-  // Fetch all machines — exclude synthetic rollup rows from XLSX imports
+  // Fetch all machines (excluding synthetic placeholders)
   const { data: machines } = await supabase
     .from('dashboard_machines')
     .select('id, name')
@@ -88,66 +84,88 @@ export default async function DashboardPage() {
     .neq('name', 'Unknown Machine')
     .neq('name', 'Total')
 
+  // Fetch historical baselines (Sales By Machine XLSX imports)
+  const { data: baselines } = await supabase
+    .from('historical_baselines')
+    .select('machine_name, period_start, period_end, total_revenue, transaction_count')
+    .eq('user_id', OPERATOR_UUID)
+    .order('period_start', { ascending: true })
+
   const txList: Transaction[] = (allTransactions || []) as unknown as Transaction[]
   const machineList: Machine[] = (machines || []) as unknown as Machine[]
+  const baselineList: Baseline[] = (baselines || []) as unknown as Baseline[]
 
-  // Check if we have any data at all
   const hasData = txList.length > 0 || machineList.length > 0
+  const hasBaselines = baselineList.length > 0
 
-  // ---- Compute actual data date range ----
-  const txDates = txList
-    .map(t => t.transaction_date)
-    .filter(Boolean)
-    .sort()
-  const earliestTx = txDates[0] ?? null
-  const latestTx = txDates[txDates.length - 1] ?? null
-
-  // Human-readable range label, e.g. "Apr 2 – Apr 18"
-  const dataRangeLabel = earliestTx && latestTx
-    ? fmtDate(earliestTx) === fmtDate(latestTx)
-      ? fmtDate(latestTx)
-      : `${fmtDate(earliestTx)} – ${fmtDate(latestTx)}`
+  // ── SQS date range ──
+  const txDates = txList.map(t => t.transaction_date).filter(Boolean).sort()
+  const sqsEarliest = txDates[0] ?? null
+  const sqsLatest   = txDates[txDates.length - 1] ?? null
+  const sqsRangeLabel = sqsEarliest && sqsLatest
+    ? fmtDate(sqsEarliest) === fmtDate(sqsLatest)
+      ? fmtDate(sqsLatest)
+      : `${fmtDate(sqsEarliest)} – ${fmtDate(sqsLatest)}`
     : null
 
-  // Column label for the rightmost machine table column
-  const rangeColumnLabel = dataRangeLabel ?? '30 Days'
+  // ── Historical baseline range (latest baseline period) ──
+  const latestBaseline = baselineList.length > 0
+    ? baselineList.reduce((a, b) => (a.period_end > b.period_end ? a : b))
+    : null
+  const baselineRangeLabel = latestBaseline
+    ? `${fmtDate(latestBaseline.period_start)} – ${fmtDate(latestBaseline.period_end)}`
+    : null
 
-  // ---- Top stats (all available data) ----
-  const totalRevenueCents = txList.reduce((s, t) => s + (t.amount_cents || 0), 0)
-  const totalTransactions = txList.length
+  // ── Blended header subtitle ──
+  // If we have both, show the historical range (wider context)
+  const headerRangeLabel = baselineRangeLabel ?? sqsRangeLabel
+
+  // ── Top stat cards — use SQS for live totals ──
+  const sqsRevenue = txList.reduce((s, t) => s + (t.amount_cents || 0), 0)
+  const sqsTransactions = txList.length
   const activeMachinesCount = machineList.length
-  const avgPerMachine = activeMachinesCount > 0 ? Math.round(totalRevenueCents / activeMachinesCount) : 0
 
-  // ---- Machine performance table ----
+  // Historical baseline totals (aggregate across all machines for latest period)
+  const baselineRevenue = hasBaselines
+    ? baselineList
+        .filter(b => latestBaseline && b.period_start === latestBaseline.period_start && b.period_end === latestBaseline.period_end)
+        .reduce((s, b) => s + (b.total_revenue || 0), 0)
+    : 0
+  const baselineTxCount = hasBaselines
+    ? baselineList
+        .filter(b => latestBaseline && b.period_start === latestBaseline.period_start && b.period_end === latestBaseline.period_end)
+        .reduce((s, b) => s + (b.transaction_count || 0), 0)
+    : 0
+
+  // For avg/machine use SQS data (most accurate per-machine)
+  const avgPerMachine = activeMachinesCount > 0 && sqsRevenue > 0
+    ? Math.round(sqsRevenue / activeMachinesCount) : 0
+
+  // ── Machine performance table ──
   type MachineStats = {
-    id: string
-    name: string
-    today: number
-    yesterday: number
-    last7: number
-    allTime: number
+    id: string; name: string
+    today: number; yesterday: number; last7: number; sqsTotal: number
+    baselineRevenue: number; baselineTxCount: number
     topProduct: string
   }
 
-  const machineStats: MachineStats[] = machineList.map((m) => {
+  // Build a lookup: machine_name → baseline row for the latest period
+  const baselineByMachine: Record<string, Baseline> = {}
+  if (latestBaseline) {
+    baselineList
+      .filter(b => b.period_start === latestBaseline.period_start && b.period_end === latestBaseline.period_end)
+      .forEach(b => { baselineByMachine[b.machine_name] = b })
+  }
+
+  const machineStats: MachineStats[] = machineList.map(m => {
     const machineTx = txList.filter(t => t.machine_id === m.id)
+    const todayRev     = machineTx.filter(t => t.transaction_date?.startsWith(todayStr)).reduce((s,t) => s + (t.amount_cents||0), 0)
+    const yesterdayRev = machineTx.filter(t => t.transaction_date?.startsWith(yesterdayStr)).reduce((s,t) => s + (t.amount_cents||0), 0)
+    const last7Rev     = machineTx.filter(t => t.transaction_date && t.transaction_date >= sevenDaysAgo.toISOString()).reduce((s,t) => s + (t.amount_cents||0), 0)
+    const sqsTot       = machineTx.reduce((s,t) => s + (t.amount_cents||0), 0)
 
-    const todayRevenue = machineTx
-      .filter(t => t.transaction_date?.startsWith(todayStr))
-      .reduce((s, t) => s + (t.amount_cents || 0), 0)
+    const bl = baselineByMachine[m.name]
 
-    const yesterdayRevenue = machineTx
-      .filter(t => t.transaction_date?.startsWith(yesterdayStr))
-      .reduce((s, t) => s + (t.amount_cents || 0), 0)
-
-    const sevenDayRevenue = machineTx
-      .filter(t => t.transaction_date && t.transaction_date >= sevenDaysAgo.toISOString())
-      .reduce((s, t) => s + (t.amount_cents || 0), 0)
-
-    const allTimeRevenue = machineTx
-      .reduce((s, t) => s + (t.amount_cents || 0), 0)
-
-    // Top product
     const productCounts: Record<string, number> = {}
     machineTx.forEach(t => {
       const p = t.product_name || 'Unknown'
@@ -156,24 +174,19 @@ export default async function DashboardPage() {
     const topProduct = Object.entries(productCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '—'
 
     return {
-      id: m.id,
-      name: m.name,
-      today: todayRevenue,
-      yesterday: yesterdayRevenue,
-      last7: sevenDayRevenue,
-      allTime: allTimeRevenue,
+      id: m.id, name: m.name,
+      today: todayRev, yesterday: yesterdayRev, last7: last7Rev, sqsTotal: sqsTot,
+      baselineRevenue:   bl?.total_revenue    ?? 0,
+      baselineTxCount:   bl?.transaction_count ?? 0,
       topProduct,
     }
-  }).sort((a, b) => b.allTime - a.allTime)
+  }).sort((a, b) => (b.baselineRevenue || b.sqsTotal) - (a.baselineRevenue || a.sqsTotal))
 
-  // ---- Recent transactions ----
   const recentTx = txList.slice(0, 20)
 
-  // Helper to get machine name from machine_id
   const getMachineName = (tx: Transaction) => {
-    if (tx.dashboard_machines && typeof tx.dashboard_machines === 'object' && 'name' in tx.dashboard_machines) {
+    if (tx.dashboard_machines && typeof tx.dashboard_machines === 'object' && 'name' in tx.dashboard_machines)
       return (tx.dashboard_machines as { name: string }).name
-    }
     return machineList.find(m => m.id === tx.machine_id)?.name || '—'
   }
 
@@ -181,34 +194,50 @@ export default async function DashboardPage() {
     <div className="p-6 lg:p-8">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">
-          Welcome back, {firstName} 👋
-        </h1>
+        <h1 className="text-2xl font-bold text-white">Welcome back, {firstName} 👋</h1>
         <p className="text-gray-400 mt-1">
-          {hasData && dataRangeLabel
-            ? `Showing data from ${dataRangeLabel}.`
-            : hasData
-            ? 'Here\'s an overview of your vending operation.'
-            : 'Here\'s an overview of your vending operation.'}
+          {headerRangeLabel
+            ? `Showing data from ${headerRangeLabel}.`
+            : hasData ? 'Here\'s an overview of your vending operation.' : 'Here\'s an overview of your vending operation.'}
         </p>
       </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-        <StatCard
-          title="Total Revenue"
-          value={formatCurrency(totalRevenueCents)}
-          subtitle={dataRangeLabel ?? 'All time'}
-          icon={<DollarSign className="w-5 h-5" />}
-          accent="blue"
-        />
-        <StatCard
-          title="Transactions"
-          value={totalTransactions.toLocaleString()}
-          subtitle={dataRangeLabel ?? 'All time'}
-          icon={<ShoppingCart className="w-5 h-5" />}
-          accent="green"
-        />
+        {hasBaselines ? (
+          <StatCard
+            title="90-Day Revenue"
+            value={formatCurrency(baselineRevenue)}
+            subtitle={baselineRangeLabel ?? 'Historical baseline'}
+            icon={<DollarSign className="w-5 h-5" />}
+            accent="blue"
+          />
+        ) : (
+          <StatCard
+            title="Total Revenue"
+            value={formatCurrency(sqsRevenue)}
+            subtitle={sqsRangeLabel ?? 'All time'}
+            icon={<DollarSign className="w-5 h-5" />}
+            accent="blue"
+          />
+        )}
+        {hasBaselines ? (
+          <StatCard
+            title="90-Day Transactions"
+            value={baselineTxCount.toLocaleString()}
+            subtitle={baselineRangeLabel ?? 'Historical baseline'}
+            icon={<ShoppingCart className="w-5 h-5" />}
+            accent="green"
+          />
+        ) : (
+          <StatCard
+            title="Transactions"
+            value={sqsTransactions.toLocaleString()}
+            subtitle={sqsRangeLabel ?? 'All time'}
+            icon={<ShoppingCart className="w-5 h-5" />}
+            accent="green"
+          />
+        )}
         <StatCard
           title="Active Machines"
           value={activeMachinesCount.toString()}
@@ -219,14 +248,13 @@ export default async function DashboardPage() {
         <StatCard
           title="Avg / Machine"
           value={formatCurrency(avgPerMachine)}
-          subtitle={dataRangeLabel ?? 'All time'}
+          subtitle={sqsRangeLabel ? `Live · ${sqsRangeLabel}` : 'Live data'}
           icon={<TrendingUp className="w-5 h-5" />}
           accent="orange"
         />
       </div>
 
       {!hasData ? (
-        /* Empty State */
         <div className="bg-gray-800 rounded-2xl border border-gray-700 p-8 lg:p-12 text-center">
           <div className="w-16 h-16 bg-blue-600/20 border border-blue-600/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <Upload className="w-8 h-8 text-blue-400" />
@@ -235,12 +263,9 @@ export default async function DashboardPage() {
           <p className="text-gray-400 mb-6 max-w-sm mx-auto">
             Upload your first Nayax CSV export to see machine performance, revenue, and transaction history.
           </p>
-          <Link
-            href="/dashboard/upload"
-            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-medium transition-colors"
-          >
-            <Upload className="w-4 h-4" />
-            Upload CSV
+          <Link href="/dashboard/upload"
+            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-medium transition-colors">
+            <Upload className="w-4 h-4" /> Upload CSV
           </Link>
         </div>
       ) : (
@@ -249,9 +274,16 @@ export default async function DashboardPage() {
           {machineStats.length > 0 && (
             <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
-                <h2 className="text-white font-semibold">Machine Performance</h2>
-                {dataRangeLabel && (
-                  <span className="text-gray-400 text-sm">{dataRangeLabel}</span>
+                <div>
+                  <h2 className="text-white font-semibold">Machine Performance</h2>
+                  {hasBaselines && sqsRangeLabel && (
+                    <p className="text-gray-500 text-xs mt-0.5">
+                      Today/Yesterday/7d from live SQS · {baselineRangeLabel} from historical baseline
+                    </p>
+                  )}
+                </div>
+                {sqsRangeLabel && (
+                  <span className="text-gray-400 text-sm">{sqsRangeLabel}</span>
                 )}
               </div>
               <div className="overflow-x-auto">
@@ -262,19 +294,26 @@ export default async function DashboardPage() {
                       <th className="text-right text-xs text-gray-400 uppercase tracking-wider px-4 py-3">Today</th>
                       <th className="text-right text-xs text-gray-400 uppercase tracking-wider px-4 py-3">Yesterday</th>
                       <th className="text-right text-xs text-gray-400 uppercase tracking-wider px-4 py-3">7 Days</th>
-                      <th className="text-right text-xs text-gray-400 uppercase tracking-wider px-4 py-3">{rangeColumnLabel}</th>
+                      {hasBaselines ? (
+                        <th className="text-right text-xs text-gray-400 uppercase tracking-wider px-4 py-3">
+                          {baselineRangeLabel ?? '90 Days'}
+                        </th>
+                      ) : (
+                        <th className="text-right text-xs text-gray-400 uppercase tracking-wider px-4 py-3">
+                          {sqsRangeLabel ?? 'All Time'}
+                        </th>
+                      )}
                       <th className="text-left text-xs text-gray-400 uppercase tracking-wider px-6 py-3">Top Product</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-700/50">
-                    {machineStats.map((m) => {
+                    {machineStats.map(m => {
                       const dayChange = m.today - m.yesterday
+                      const rangeRevenue = hasBaselines ? m.baselineRevenue : m.sqsTotal
                       return (
                         <tr key={m.id} className="hover:bg-gray-700/30 transition-colors">
                           <td className="px-6 py-4">
-                            <span className="text-white font-medium hover:text-blue-400 cursor-pointer">
-                              {m.name}
-                            </span>
+                            <span className="text-white font-medium">{m.name}</span>
                           </td>
                           <td className="px-4 py-4 text-right">
                             <div className="flex flex-col items-end">
@@ -293,7 +332,10 @@ export default async function DashboardPage() {
                             <span className="text-gray-300 text-sm">{formatCurrency(m.last7)}</span>
                           </td>
                           <td className="px-4 py-4 text-right">
-                            <span className="text-white text-sm font-medium">{formatCurrency(m.allTime)}</span>
+                            <span className="text-white text-sm font-medium">{formatCurrency(rangeRevenue)}</span>
+                            {hasBaselines && m.baselineTxCount > 0 && (
+                              <div className="text-xs text-gray-500">{m.baselineTxCount.toLocaleString()} vends</div>
+                            )}
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-gray-300 text-sm truncate max-w-[150px] block">{m.topProduct}</span>
@@ -307,15 +349,26 @@ export default async function DashboardPage() {
             </div>
           )}
 
+          {/* Data Sources Legend */}
+          {hasBaselines && sqsRangeLabel && (
+            <div className="flex flex-wrap gap-4 text-xs text-gray-500 px-1">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+                Live SQS · {sqsRangeLabel} · {sqsTransactions.toLocaleString()} transactions
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-gray-500 inline-block"></span>
+                Historical baseline · {baselineRangeLabel} · {baselineTxCount.toLocaleString()} vends total
+              </span>
+            </div>
+          )}
+
           {/* Recent Transactions */}
           {recentTx.length > 0 && (
             <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
                 <h2 className="text-white font-semibold">Recent Transactions</h2>
-                <Link
-                  href="/dashboard/transactions"
-                  className="text-blue-400 hover:text-blue-300 text-sm transition-colors"
-                >
+                <Link href="/dashboard/transactions" className="text-blue-400 hover:text-blue-300 text-sm transition-colors">
                   View all
                 </Link>
               </div>
@@ -331,31 +384,23 @@ export default async function DashboardPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-700/50">
-                    {recentTx.map((tx) => (
+                    {recentTx.map(tx => (
                       <tr key={tx.id} className="hover:bg-gray-700/30 transition-colors">
                         <td className="px-6 py-3">
                           <span className="text-gray-300 text-sm whitespace-nowrap">
                             {tx.transaction_date ? formatTime(tx.transaction_date) : '—'}
                           </span>
                         </td>
-                        <td className="px-4 py-3">
-                          <span className="text-gray-300 text-sm">{getMachineName(tx)}</span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="text-gray-300 text-sm">{tx.product_name || '—'}</span>
-                        </td>
+                        <td className="px-4 py-3"><span className="text-gray-300 text-sm">{getMachineName(tx)}</span></td>
+                        <td className="px-4 py-3"><span className="text-gray-300 text-sm">{tx.product_name || '—'}</span></td>
                         <td className="px-4 py-3 text-right">
-                          <span className="text-white text-sm font-medium">
-                            {formatCurrency(tx.amount_cents || 0)}
-                          </span>
+                          <span className="text-white text-sm font-medium">{formatCurrency(tx.amount_cents || 0)}</span>
                         </td>
                         <td className="px-6 py-3">
                           <span className={`text-xs px-2 py-0.5 rounded-full ${
-                            tx.payment_type === 'Cash'
-                              ? 'bg-green-500/20 text-green-400'
-                              : tx.payment_type === 'Credit Card'
-                              ? 'bg-blue-500/20 text-blue-400'
-                              : 'bg-gray-600/50 text-gray-400'
+                            tx.payment_type === 'Cash' ? 'bg-green-500/20 text-green-400'
+                            : tx.payment_type === 'Credit Card' ? 'bg-blue-500/20 text-blue-400'
+                            : 'bg-gray-600/50 text-gray-400'
                           }`}>
                             {tx.payment_type || 'Unknown'}
                           </span>
